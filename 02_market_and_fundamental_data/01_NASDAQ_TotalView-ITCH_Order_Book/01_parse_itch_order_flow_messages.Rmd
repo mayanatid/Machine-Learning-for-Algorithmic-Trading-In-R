@@ -6,25 +6,148 @@ output: html_document
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+# knitr::opts_knit$set(root.dir =
+#                        "~/Desktop/MLFAT_R/Machine-Learning-for-Algorithmic-Trading-R/02_market_and_fundamental_data")
+
 ```
 
-## R Markdown
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+## Working with Order Book Data: NASDAQ ITCH
+There is an R package called [RITCH](https://github.com/DavZim/RITCH) created by DavZim which processes the ITCH binary files. Therefore, much of the work done by Jansen in this section is done for free (yay!).
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
-
-```{r cars}
-summary(cars)
+## Imports
+```{r imports, include=FALSE}
+# Need some additional libraries
+library(tidyverse)
+library(R.utils)
+library(readxl)
 ```
 
-## Including Plots
+## Get NASDAQ ITCH Data from FTP Server
 
-You can also embed plots, for example:
+(Jansen:) The Nasdaq offers samples of daily binary files for several months.
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+We are now going to illustrates how to parse a sample file of ITCH messages and reconstruct both the executed trades and the order book for any given tick.
+
+The data is fairly large and running the entire example can take a lot of time and require substantial memory (16GB+). Also, the sample file used in this example may no longer be available because NASDAQ occasionaly updates the sample files.
+
+
+### Set Data Paths
+These will be set to the working directory
+
+```{r data_paths}
+# Set working directory
+setwd("~/Desktop/MLFAT_R/Machine-Learning-for-Algorithmic-Trading-R/02_market_and_fundamental_data/01_NASDAQ_TotalView-ITCH_Order_Book")
+
+# Define file path
+datapath = '~/Desktop/MLFAT_R/'
+datapath2 = '~/Desktop/MLFAT_R/data'
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+### Download & unzip
+While the below code should work, I found that dragging and dropping the ITCH50.gz file directly from the [ftp server]('ftp://emi.nasdaq.com/ITCH/') was much faster. Likewise, unzipping through my OS seemed to be more reliable.
+
+```{r url_def}
+# URL for data download
+FTP_URL = 'ftp://emi.nasdaq.com/ITCH/'
+SOURCE_FILE = '10302019.NASDAQ_ITCH50.gz'
+uname = paste(FTP_URL, SOURCE_FILE, sep = "")
+```
+
+This function will check your working director (set earlier) to see if the data directory and ITCH files are present. If not they are created
+
+```{r may_be_download}
+# Set timeout to 1000 seconds
+options(timeout=10000)
+may_be_download = function(url) 
+{
+  # Download and unzip ITCH data if not yet available
+  if(!"data" %in% list.files(datapath)) {
+    print("Creating directory")
+    dir.create(datapath)
+  } else {
+    print("Directory Exists")
+  }
+  # Splits url string to retrieve file name
+  splt_url = tail(unlist(str_split(url, pattern = "/")),n=1)[1]
+  filename = paste(datapath2, splt_url, sep = "/")
+  if(!splt_url %in% list.files(datapath))
+  {
+    print(paste("Downloading...", url))
+    # Download File
+
+    download.file(url,filename)
+  } else {
+    print("File exists")
+  }
+  
+  # gets file stem without extension and creates .bin file path
+  file_only = tools::file_path_sans_ext(splt_url)
+  unzipped = paste(datapath2, file_only, sep = "/")
+  if(!file_only %in% list.files(datapath2)){
+    print(paste("Unzipping to", datapath2))
+    gunzip(filename, unzipped, remove=FALSE)
+  } else {
+    print("File already unpacked")
+  }
+  return(unzipped)
+}
+```
+
+This will download 3.87GB data that unzips to 9.04GB. As noted, downloading this file takes a while- longer than 15 minutes. I opted to go to the ftp site and drag and drop it into the directory which copied over faster.
+
+```{r get_data}
+file_name = may_be_download(paste(FTP_URL, SOURCE_FILE, sep = "/"))
+date = unlist(str_split(SOURCE_FILE, pattern = "."))[1]
+```
+
+## Using RITCH package
+There is a whole section on creating the formatting and mapping structures to parse the ITCH file. Since RITCH does most of this for you, it is bypassed here, and we just show how the package can be used to get the summary and plot that appear in the book.
+
+*Installing RITCH:* see the [github repo](https://github.com/DavZim/RITCH) for installation directions. 
+
+```{r RITCH}
+library(RITCH)
+# This counts messages
+msg_count = count_messages(file_name, add_meta_data = TRUE, quiet = TRUE)
+head(msg_count)
+```
+
+Now we can summarize message counts as is done in the text. We actually get more data using the 'add_meta_data' and 'quiet' options. *Note:* the data frame produced by count_messages has missing row names. This causes issues for dplyr functions. The below fixes this
+
+```{r row_names, echo=TRUE}
+row.names(msg_count) = (1:nrow(msg_count))
+```
+
+We can now display the data as it appears in the text
+
+```{r msg_summary}
+msg_count_summary = msg_count %>% select(msg_type, msg_class, msg_name, count) %>% arrange(desc(count))
+msg_count_summary
+```
+
+```{r top_equities_traded}
+
+trades = read_trades(file_name, quiet = TRUE)
+trades = trades %>% mutate(value = price * shares)
+trades = trades %>% mutate(value_share = value/sum(value, na.rm = TRUE))
+trade_summary = trades %>% group_by(stock) %>% summarise(share_traded = sum(value_share, na.rm = TRUE), .groups='drop') %>%                                arrange(desc(share_traded))
+
+head(trade_summary)
+```
+
+```{r plot_top_equities}
+(ggplot(data = head(trade_summary,30), aes(x = reorder(stock, -share_traded), y = share_traded)) 
+  + geom_bar(stat="identity", fill="steelblue") 
+  + theme(text = element_text(size = 6), 
+          panel.background = element_rect(fill='white', colour = 'grey'), 
+          panel.grid.major = element_line(colour = "grey70", size = 0.2),
+          panel.grid.minor = element_line(colour = "grey70", size = 0.2))
+  + ggtitle("Share of Traded Value")
+  + xlab("Stock")
+  + ylab("% of total value")
+  + scale_y_continuous(labels = scales::percent_format(accuracy = 1), expand = expansion(mult=c(0,.05)))
+  
+ )
+```
+
