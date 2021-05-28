@@ -42,8 +42,8 @@ datapath2 = '~/Desktop/MLFAT_R/data'
 
 While the below code should work, I found that dragging and dropping the
 ITCH50.gz file directly from the [ftp
-server]('ftp://emi.nasdaq.com/ITCH/') was much faster. Likewise,
-unzipping through my OS seemed to be more reliable.
+server](ftp://emi.nasdaq.com/ITCH/) was much faster. Likewise, unzipping
+through my OS seemed to be more reliable.
 
 ``` r
 # URL for data download
