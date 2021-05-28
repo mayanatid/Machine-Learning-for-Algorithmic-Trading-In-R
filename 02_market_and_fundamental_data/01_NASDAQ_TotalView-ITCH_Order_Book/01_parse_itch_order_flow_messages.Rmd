@@ -2,7 +2,7 @@
 title: "01_parse_itch_order_flow_messages"
 author: "Mayan"
 date: "5/28/2021"
-output: html_document
+output: rmarkdown::github_document
 ---
 
 ```{r setup, include=FALSE}
